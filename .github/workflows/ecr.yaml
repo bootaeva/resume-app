@@ -3,7 +3,6 @@ name: CI/CD for Resume App
 on:
   push:
     branches:
-      - main
       - dev
       - 'feature/**'
 
@@ -48,6 +47,7 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-22.04
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || 'dev' }}
     outputs:
       image_tag: ${{ steps.tag.outputs.image_tag }}
     steps:
