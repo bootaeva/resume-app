@@ -1,0 +1,31 @@
+app_name: resume-frontend
+namespace: resume
+port: 3000
+service_type: ClusterIP
+replicaCount: 2
+
+image:
+  repository: 570082719665.dkr.ecr.us-east-1.amazonaws.com/resume-frontend
+  tag: latest
+
+env:
+  BACKEND_URL: "http://resume-backend-service:8000"
+
+ingress:
+  enabled: true
+  name: resume
+  host: "bootaeva.dev"
+  tlsSecretName: "bootaeva-dev-tls"
+  className: nginx
+  backendService:
+    name: resume-backend
+    port: 8000
+  frontendService:
+    name: resume-frontend
+    port: 3000
+
+serviceAccount:
+  enabled: false
+  create: false
+  name: ""
+  roleArn: ""

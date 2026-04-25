@@ -1,0 +1,135 @@
+name: CI/CD for Resume App
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - 'feature/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  CLUSTER_NAME: ${{ vars.CLUSTER_NAME }}
+  NAMESPACE: resume
+
+jobs:
+  # 1. Run tests before anything is built.
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Backend tests
+        working-directory: ./backend
+        run: |
+          pip install -r requirements.txt
+          pytest --tb=short -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend lint
+        working-directory: ./frontend
+        run: |
+          npm ci
+          npm run lint
+
+  # 2. Build & push both images. Tag = short commit SHA (immutable, traceable).
+  build:
+    needs: test
+    runs-on: ubuntu-22.04
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v5.1.1
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.IAM_ROLE }}
+          role-session-name: gha-build
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: tag
+        run: echo "image_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push backend
+        env:
+          REGISTRY:   ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: resume-backend
+          IMAGE_TAG:  ${{ steps.tag.outputs.image_tag }}
+        run: |
+          docker build -f ./backend/Dockerfile -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+
+      - name: Build & push frontend
+        working-directory: ./frontend
+        env:
+          REGISTRY:   ${{ steps.ecr.outputs.registry }}
+          REPOSITORY: resume-frontend
+          IMAGE_TAG:  ${{ steps.tag.outputs.image_tag }}
+        run: |
+          docker build -t $REGISTRY/$REPOSITORY:$IMAGE_TAG .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+
+  # 3. Deploy. The environment is resolved from the branch; production
+  #    requires manual approval via Settings → Environments → production.
+  deploy:
+    needs: build
+    runs-on: ubuntu-22.04
+    environment: ${{ github.ref == 'refs/heads/main' && 'production' || github.ref == 'refs/heads/stage' && 'stage' || 'dev' }}
+    env:
+      IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v5.1.1
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ vars.IAM_ROLE }}
+          role-session-name: gha-deploy
+
+      - name: Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name   $CLUSTER_NAME \
+            --region ${{ vars.AWS_REGION }}
+
+      - name: Resolve stage
+        run: |
+          case "${GITHUB_REF}" in
+            refs/heads/main)  echo "STAGE=prod" >> "$GITHUB_ENV" ;;
+            *)                echo "STAGE=dev"  >> "$GITHUB_ENV" ;;
+          esac
+
+      - name: Deploy backend
+        run: |
+          helm upgrade --install resume-backend k8s-app \
+            --set image.tag=$IMAGE_TAG \
+            --namespace $NAMESPACE --create-namespace \
+            --values k8s-app/backend/$STAGE-values.yaml \
+            --atomic --timeout 5m
+
+      - name: Deploy frontend
+        run: |
+          helm upgrade --install resume-frontend k8s-app \
+            --set image.tag=$IMAGE_TAG \
+            --namespace $NAMESPACE --create-namespace \
+            --values k8s-app/frontend/$STAGE-values.yaml \
+            --atomic --timeout 5m

@@ -1,0 +1,9 @@
+# Skip the virtual environment — container installs its own packages via requirements.txt
+venv/
+
+# Skip Python's compiled cache files
+__pycache__/
+*.pyc
+
+# Skip environment variables file
+.env
