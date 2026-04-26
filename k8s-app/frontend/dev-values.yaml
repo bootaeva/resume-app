@@ -14,8 +14,8 @@ env:
 ingress:
   enabled: true
   name: resume
-  host: "bootaeva.dev"
-  tlsSecretName: "bootaeva-dev-tls"
+  host: "bootaeva.com"
+  tlsSecretName: "bootaeva-com-tls"
   className: nginx
   backendService:
     name: resume-backend

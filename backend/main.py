@@ -6,7 +6,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://bootaeva.dev"],
+    allow_origins=["https://bootaeva.com"],
     allow_methods=["GET"],
     allow_headers=["*"],
 )
